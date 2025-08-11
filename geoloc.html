@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Geolocation Demo — Simple Tracker</title>
+  <style>
+    :root{
+      --bg: #f6f8fb;
+      --card: #ffffff;
+      --accent: #1e90ff;
+      --muted: #6b7280;
+      --success: #10b981;
+      --danger: #ef4444;
+    }
+
+    body {
+      font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+      background: var(--bg);
+      color: #111827;
+      margin: 0;
+      padding: 28px;
+      display: flex;
+      justify-content: center;
+    }
+
+    .container {
+      width: 900px;
+      max-width: 95%;
+      background: var(--card);
+      border-radius: 12px;
+      box-shadow: 0 6px 18px rgba(16,24,40,0.06);
+      padding: 20px;
+    }
+
+    h1 {
+      margin: 0 0 10px 0;
+      font-size: 20px;
+      display:flex;
+      align-items:center;
+      gap:10px;
+    }
+
+    p.lead { margin:0 0 18px 0; color:var(--muted); }
+
+    .controls {
+      display:flex;
+      gap:10px;
+      margin-bottom:16px;
+    }
+
+    button {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 8px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      box-shadow: 0 2px 6px rgba(30,144,255,0.16);
+    }
+
+    button.secondary {
+      background: white;
+      color: #111827;
+      border: 1px solid #e6e9ef;
+      box-shadow: none;
+      font-weight: 600;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .status {
+      margin-bottom: 14px;
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .main {
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .info {
+      background: #fafafa;
+      padding: 14px;
+      border-radius: 8px;
+      border: 1px solid #f0f2f5;
+    }
+
+    .info dl {
+      display: grid;
+      grid-template-columns: 110px 1fr;
+      row-gap:8px;
+      column-gap:12px;
+      margin:0;
+    }
+    dt { color: var(--muted); font-size: 13px; }
+    dd { margin:0; font-weight:600; }
+
+    .map {
+      border-radius:8px;
+      overflow:hidden;
+      border:1px solid #f0f2f5;
+      min-height:240px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background: linear-gradient(180deg,#fff,#fbfdff);
+    }
+
+    .notes {
+      margin-top:16px;
+      color:var(--muted);
+      font-size:13px;
+    }
+
+    a.small { font-size:13px; color:var(--accent); text-decoration:none; }
+
+    @media (max-width:800px){
+      .main { grid-template-columns: 1fr; }
+      .map { min-height:200px; }
+      dt { grid-column:1 / -1; }
+      dd { grid-column:1 / -1; margin-bottom:8px;}
+    }
+  </style>
+</head>
+<body>
+  <div class="container" role="main">
+    <h1>Geolocation Tracker</h1>
+    <p class="lead">Get device latitude & longitude, accuracy and optionally track continuously.</p>
+
+    <div class="controls">
+      <button id="btnGet">Get Current Location</button>
+      <button id="btnStart">Start Tracking</button>
+      <button id="btnStop" class="secondary" disabled>Stop Tracking</button>
+      <button id="btnCopy" class="secondary" disabled>Copy Coordinates</button>
+    </div>
+
+    <div class="status" id="status">Status: <strong id="statusText">idle</strong></div>
+
+    <div class="main">
+      <div class="info">
+        <dl>
+          <dt>Latitude:</dt>   <dd id="lat">—</dd>
+          <dt>Longitude:</dt>  <dd id="lng">—</dd>
+          <dt>Accuracy (m):</dt><dd id="acc">—</dd>
+          <dt>Timestamp:</dt>  <dd id="ts">—</dd>
+        </dl>
+
+        <div style="margin-top:10px;">
+          <a id="gmLink" class="small" href="#" target="_blank" rel="noopener">Open in Google Maps</a>
+        </div>
+      </div>
+
+      <div class="map" id="mapWrap">
+        <!-- Map iframe will be inserted here -->
+        <div id="mapPlaceholder">Map preview will appear here once you allow location.</div>
+      </div>
+    </div>
+
+    <div class="notes">
+      <ul>
+        <li>Geolocation requires user permission and usually works only on secure contexts (HTTPS or localhost).</li>
+        <li>If permission is denied you'll see an error message in the status area.</li>
+      </ul>
+    </div>
+  </div>
+
+  <script>
+    // Elements
+    const btnGet = document.getElementById('btnGet');
+    const btnStart = document.getElementById('btnStart');
+    const btnStop = document.getElementById('btnStop');
+    const btnCopy = document.getElementById('btnCopy');
+
+    const statusText = document.getElementById('statusText');
+    const latEl = document.getElementById('lat');
+    const lngEl = document.getElementById('lng');
+    const accEl = document.getElementById('acc');
+    const tsEl = document.getElementById('ts');
+    const gmLink = document.getElementById('gmLink');
+    const mapWrap = document.getElementById('mapWrap');
+    const mapPlaceholder = document.getElementById('mapPlaceholder');
+
+    let watchId = null;
+    let lastPosition = null;
+
+    // Helpers
+    function showStatus(txt, danger = false) {
+      statusText.textContent = txt;
+      statusText.style.color = danger ? 'var(--danger)' : 'inherit';
+    }
+
+    function updateUIFromPosition(pos) {
+      const { latitude, longitude, accuracy } = pos.coords;
+      const ts = new Date(pos.timestamp).toLocaleString();
+
+      latEl.textContent = latitude.toFixed(6);
+      lngEl.textContent = longitude.toFixed(6);
+      accEl.textContent = accuracy ? accuracy.toFixed(1) : '—';
+      tsEl.textContent = ts;
+
+      lastPosition = { latitude, longitude, accuracy, timestamp: pos.timestamp };
+
+      // enable copy & google maps link
+      btnCopy.disabled = false;
+      gmLink.href = `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`;
+      gmLink.textContent = 'Open in Google Maps';
+
+      // update embedded map preview (Google Maps iframe)
+      updateMapIframe(latitude, longitude);
+    }
+
+    function updateMapIframe(lat, lng) {
+      // Create or replace an iframe for a simple map preview.
+      const src = `https://www.google.com/maps?q=${lat},${lng}&z=15&output=embed`;
+      // clear mapWrap then append
+      mapWrap.innerHTML = '';
+      const iframe = document.createElement('iframe');
+      iframe.width = '100%';
+      iframe.height = '240';
+      iframe.frameBorder = '0';
+      iframe.referrerPolicy = 'no-referrer-when-downgrade';
+      iframe.style.border = '0';
+      iframe.src = src;
+      iframe.title = 'Map preview';
+      mapWrap.appendChild(iframe);
+    }
+
+    function handleError(err) {
+      console.error('Geolocation error', err);
+      switch (err.code) {
+        case err.PERMISSION_DENIED:
+          showStatus('Permission denied', true);
+          break;
+        case err.POSITION_UNAVAILABLE:
+          showStatus('Position unavailable', true);
+          break;
+        case err.TIMEOUT:
+          showStatus('Timeout getting position', true);
+          break;
+        default:
+          showStatus('Error getting position', true);
+      }
+    }
+
+    // Actions
+    async function getCurrentLocation() {
+      if (!navigator.geolocation) {
+        showStatus('Geolocation not supported in this browser', true);
+        return;
+      }
+      showStatus('Getting current location...');
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          updateUIFromPosition(pos);
+          showStatus('Got current location');
+        },
+        err => handleError(err),
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+      );
+    }
+
+    function startTracking() {
+      if (!navigator.geolocation) {
+        showStatus('Geolocation not supported', true);
+        return;
+      }
+      if (watchId !== null) return;
+      showStatus('Tracking started');
+      btnStart.disabled = true;
+      btnStop.disabled = false;
+
+      watchId = navigator.geolocation.watchPosition(
+        pos => {
+          updateUIFromPosition(pos);
+          showStatus('Tracking — updating location');
+        },
+        err => handleError(err),
+        { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
+      );
+    }
+
+    function stopTracking() {
+      if (watchId === null) return;
+      navigator.geolocation.clearWatch(watchId);
+      watchId = null;
+      showStatus('Tracking stopped');
+      btnStart.disabled = false;
+      btnStop.disabled = true;
+    }
+
+    function copyCoordinates() {
+      if (!lastPosition) return;
+      const text = `${lastPosition.latitude}, ${lastPosition.longitude}`;
+      navigator.clipboard?.writeText(text).then(() => {
+        showStatus('Coordinates copied to clipboard');
+        setTimeout(()=> showStatus('idle'), 1700);
+      }).catch(() => {
+        showStatus('Could not copy automatically — select & copy', true);
+      });
+    }
+
+    // Wire up buttons
+    btnGet.addEventListener('click', getCurrentLocation);
+    btnStart.addEventListener('click', startTracking);
+    btnStop.addEventListener('click', stopTracking);
+    btnCopy.addEventListener('click', copyCoordinates);
+
+    // clean up when tab is closed or navigated away
+    window.addEventListener('beforeunload', () => {
+      if (watchId) navigator.geolocation.clearWatch(watchId);
+    });
+  </script>
+</body>
+</html>
